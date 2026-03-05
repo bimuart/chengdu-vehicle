@@ -1,0 +1,1128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>车辆作业管理系统 v3.3</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        .vin-font { font-family: 'ui-monospace', monospace; letter-spacing: -0.02em; }
+        .plate-ev { font-size: 10px; padding: 2px 4px; border-radius: 3px; font-weight: 800; background: linear-gradient(to bottom, #f0fdf4, #bbf7d0); color: #166534; border: 1px solid #86efac; white-space: nowrap; }
+        .plate-std { font-size: 10px; padding: 2px 4px; border-radius: 3px; font-weight: 800; border: 1px solid rgba(0,0,0,0.1); white-space: nowrap; }
+        .energy-label { font-size: 10px; padding: 1px 5px; border-radius: 4px; font-weight: 900; white-space: nowrap; }
+        .overlay { background-color: rgba(0,0,0,0.4); backdrop-filter: blur(4px); transition: opacity 0.3s; pointer-events: none; }
+        .overlay.show { opacity: 1; pointer-events: auto; }
+        .sheet { transition: transform 0.3s cubic-bezier(0.33, 1, 0.68, 1); border-radius: 24px 24px 0 0; }
+        .hidden-sheet { transform: translateY(100%); }
+        .filter-btn-active { border-color: #2563eb !important; background-color: #eff6ff !important; color: #2563eb !important; border-width: 2px !important; }
+        #search-bar { transition: all 0.2s ease; width: 0; opacity: 0; overflow: hidden; }
+        #search-bar.active { width: 100%; opacity: 1; }
+        .page { display: none; }
+        .page.active { display: flex; flex-direction: column; min-height: 100vh; }
+        .status-pill { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 800; }
+        .timeline-connector { position: absolute; left: 11px; top: 28px; bottom: -6px; width: 2px; background: #e2e8f0; }
+        /* PC table layout */
+        @media (min-width: 900px) {
+            body { background: #f1f5f9; }
+            .mobile-shell { max-width: none !important; box-shadow: none !important; background: transparent !important; }
+            .page.active { min-height: 100vh; }
+            #page-list { background: transparent; }
+            #pc-header { display: flex !important; }
+            #mobile-header { display: none !important; }
+            #list-container { display: none !important; }
+            #pc-table-area { display: block !important; }
+            .sheet, .overlay { max-width: 480px; left: 50%; transform: translateX(-50%); }
+            .overlay { max-width: none; left: 0; transform: none; }
+            .hidden-sheet { transform: translateX(-50%) translateY(100%) !important; }
+        }
+        @media (max-width: 899px) {
+            #pc-header { display: none !important; }
+            #pc-table-area { display: none !important; }
+        }
+        .pc-table th { position: sticky; top: 0; background: #f8fafc; z-index: 2; }
+        .pc-row:hover td { background: #f0f9ff; }
+        .pc-row td { border-bottom: 1px solid #f1f5f9; }
+        .pagination-btn { min-width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; transition: all 0.15s; border: 1px solid #e2e8f0; }
+        .pagination-btn:hover { background: #eff6ff; border-color: #93c5fd; color: #2563eb; }
+        .pagination-btn.active { background: #2563eb; color: white; border-color: #2563eb; }
+        .pagination-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    </style>
+</head>
+<body class="bg-gray-50 text-slate-900">
+<div class="max-w-md mx-auto bg-white shadow-xl font-sans relative mobile-shell" id="app-shell">
+
+    <!-- ===== PAGE: LIST ===== -->
+    <div id="page-list" class="page active">
+        <!-- Mobile header -->
+        <header id="mobile-header" class="p-4 border-b sticky top-0 bg-white/95 backdrop-blur-md z-20">
+            <div class="flex justify-between items-center h-8">
+                <h1 id="header-title" class="text-xl font-black tracking-tighter text-slate-800">车辆作业台</h1>
+                <div id="search-bar" class="flex items-center bg-slate-100 rounded-full px-3 py-1 ml-2">
+                    <i data-lucide="search" class="w-4 h-4 text-slate-400"></i>
+                    <input type="text" id="search-input" placeholder="搜车型/VIN/经办人" class="bg-transparent border-none outline-none text-sm ml-2 w-full font-bold" oninput="handleSearch()">
+                    <button onclick="closeSearch()"><i data-lucide="x" class="w-4 h-4 text-slate-400"></i></button>
+                </div>
+                <div id="header-actions" class="flex items-center gap-5 text-slate-500">
+                    <i data-lucide="search" class="w-5 h-5 cursor-pointer" onclick="openSearch()"></i>
+                    <i data-lucide="arrow-up-down" class="w-5 h-5 cursor-pointer" onclick="toggleSheet('sort-sheet')"></i>
+                    <i data-lucide="filter" class="w-5 h-5 cursor-pointer" onclick="toggleSheet('filter-sheet')"></i>
+                    <button onclick="openCreate()" class="w-7 h-7 bg-blue-600 rounded-full flex items-center justify-center text-white flex-shrink-0 active:bg-blue-700">
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                    </button>
+                </div>
+            </div>
+        </header>
+        <div class="divide-y divide-gray-100 flex-grow" id="list-container"></div>
+
+        <!-- PC table area -->
+        <div id="pc-table-area" class="min-h-screen p-6">
+            <!-- PC top bar -->
+            <header id="pc-header" class="flex items-center justify-between mb-5">
+                <div class="flex items-center gap-3">
+                    <h1 class="text-2xl font-black tracking-tighter text-slate-800">车辆作业台</h1>
+                    <span id="pc-total-badge" class="text-xs font-bold bg-slate-100 text-slate-500 px-2.5 py-1 rounded-full"></span>
+                </div>
+                <div class="flex items-center gap-3">
+                    <!-- Search -->
+                    <div class="flex items-center bg-white border border-slate-200 rounded-xl px-3 py-2 gap-2 shadow-sm w-56">
+                        <i data-lucide="search" class="w-4 h-4 text-slate-400 flex-shrink-0"></i>
+                        <input type="text" id="pc-search-input" placeholder="搜车型 / VIN / 经办人"
+                            class="bg-transparent border-none outline-none text-sm w-full font-medium placeholder:text-slate-300"
+                            oninput="handlePcSearch()">
+                    </div>
+                    <!-- Filter energy -->
+                    <select id="pc-energy-filter" onchange="handlePcFilter()" class="border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold bg-white shadow-sm outline-none cursor-pointer">
+                        <option value="">全部能源</option>
+                        <option value="纯电">纯电</option>
+                        <option value="增程">增程</option>
+                        <option value="燃油">燃油</option>
+                    </select>
+                    <!-- Filter user -->
+                    <select id="pc-user-filter" onchange="handlePcFilter()" class="border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold bg-white shadow-sm outline-none cursor-pointer">
+                        <option value="">全部经办人</option>
+                        <option value="我 (张三)">我经办的</option>
+                        <option value="李思源">李思源</option>
+                        <option value="王建国">王建国</option>
+                        <option value="赵明明">赵明明</option>
+                    </select>
+                    <!-- Export -->
+                    <button onclick="exportExcel()" class="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-black rounded-xl shadow-sm transition-colors">
+                        <i data-lucide="download" class="w-4 h-4"></i>导出 Excel
+                    </button>
+                    <!-- New -->
+                    <button onclick="openCreate()" class="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-black rounded-xl shadow-sm transition-colors">
+                        <i data-lucide="plus" class="w-4 h-4"></i>录入车辆
+                    </button>
+                </div>
+            </header>
+
+            <!-- Table -->
+            <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                <div class="overflow-x-auto">
+                    <table class="pc-table w-full border-collapse text-sm">
+                        <thead>
+                            <tr>
+                                <th class="text-left px-4 py-3 text-[11px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap cursor-pointer select-none" onclick="pcSort('model')">
+                                    <div class="flex items-center gap-1">车型 <span id="sort-icon-model" class="text-slate-300">↕</span></div>
+                                </th>
+                                <th class="text-left px-4 py-3 text-[11px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">能源/车牌</th>
+                                <th class="text-left px-4 py-3 text-[11px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">VIN 码</th>
+                                <th class="text-left px-4 py-3 text-[11px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">当前阶段</th>
+                                <th class="text-left px-4 py-3 text-[11px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap cursor-pointer select-none" onclick="pcSort('purchasePrice')">
+                                    <div class="flex items-center gap-1">采购价 <span id="sort-icon-purchasePrice" class="text-slate-300">↕</span></div>
+                                </th>
+                                <th class="text-left px-4 py-3 text-[11px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap cursor-pointer select-none" onclick="pcSort('fullDate')">
+                                    <div class="flex items-center gap-1">日期 <span id="sort-icon-fullDate" class="text-slate-300">↕</span></div>
+                                </th>
+                                <th class="text-left px-4 py-3 text-[11px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap">经办人</th>
+                                <th class="px-4 py-3 text-[11px] font-black text-slate-400 uppercase tracking-widest whitespace-nowrap text-center">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="pc-table-body"></tbody>
+                    </table>
+                </div>
+                <!-- Pagination -->
+                <div class="flex items-center justify-between px-5 py-3 border-t border-slate-100 bg-slate-50/60">
+                    <span id="pc-page-info" class="text-xs text-slate-400 font-bold"></span>
+                    <div class="flex items-center gap-1.5" id="pc-pagination"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== PAGE: DETAIL ===== -->
+    <div id="page-detail" class="page">
+        <header class="p-4 border-b sticky top-0 bg-white/95 backdrop-blur-md z-20">
+            <div class="flex items-center gap-3 h-8">
+                <button onclick="showPage('page-list')" class="text-slate-500 flex-shrink-0"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
+                <h1 class="text-lg font-black tracking-tighter text-slate-800 flex-1">车辆详情</h1>
+            </div>
+        </header>
+        <div class="flex-1 overflow-y-auto" id="detail-content"></div>
+    </div>
+
+    <!-- ===== PAGE: CREATE ===== -->
+    <div id="page-create" class="page">
+        <header class="p-4 border-b sticky top-0 bg-white/95 backdrop-blur-md z-20">
+            <div class="flex items-center gap-3 h-8">
+                <button onclick="showPage('page-list')" class="text-slate-500 flex-shrink-0"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
+                <h1 class="text-lg font-black tracking-tighter text-slate-800 flex-1">录入新车辆</h1>
+            </div>
+        </header>
+        <div class="flex-1 overflow-y-auto pb-28" id="create-content"></div>
+        <div class="sticky bottom-0 bg-white border-t px-4 pt-3 pb-6 z-30">
+            <button onclick="createSubmit()" class="w-full py-3.5 rounded-2xl bg-blue-600 text-white font-black text-sm flex items-center justify-center gap-2 active:bg-blue-700">
+                <i data-lucide="check-circle-2" class="w-4 h-4"></i>确认录入
+            </button>
+        </div>
+    </div>
+
+    <!-- ===== PAGE: HANDLE ===== -->
+    <div id="page-handle" class="page">
+        <header class="p-4 border-b sticky top-0 bg-white/95 backdrop-blur-md z-20">
+            <div class="flex items-center gap-3 h-8">
+                <button onclick="showPage(handleBackPage)" class="text-slate-500 flex-shrink-0"><i data-lucide="arrow-left" class="w-5 h-5"></i></button>
+                <h1 class="text-lg font-black tracking-tighter text-slate-800 flex-1">办理作业</h1>
+            </div>
+        </header>
+        <div class="flex-1 overflow-y-auto pb-32" id="handle-content"></div>
+        <div class="sticky bottom-0 bg-white border-t px-4 pt-3 pb-6 z-30">
+            <div class="flex gap-3">
+                <button onclick="handleSave()" class="flex-1 py-3.5 rounded-2xl border-2 border-slate-200 text-slate-700 font-black text-sm flex items-center justify-center gap-1.5 active:bg-slate-50">
+                    <i data-lucide="save" class="w-4 h-4"></i>确认提交
+                </button>
+                <button onclick="handleComplete()" class="flex-1 py-3.5 rounded-2xl bg-blue-600 text-white font-black text-sm flex items-center justify-center gap-1.5 active:bg-blue-700">
+                    <i data-lucide="check-circle-2" class="w-4 h-4"></i>本阶段完成
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Sheets -->
+<div id="sort-sheet-overlay" class="fixed inset-0 z-[100] overlay opacity-0 hidden" onclick="toggleSheet('sort-sheet')">
+    <div id="sort-sheet" class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-white sheet hidden-sheet p-6 pb-10" onclick="event.stopPropagation()">
+        <div class="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-6"></div>
+        <h3 class="text-lg font-black mb-4 italic">排序方式</h3>
+        <div class="space-y-2" id="sort-options"></div>
+    </div>
+</div>
+<div id="filter-sheet-overlay" class="fixed inset-0 z-[100] overlay opacity-0 hidden" onclick="toggleSheet('filter-sheet')">
+    <div id="filter-sheet" class="absolute bottom-0 left-0 right-0 max-w-md mx-auto bg-white sheet hidden-sheet p-6 pb-10" onclick="event.stopPropagation()">
+        <div class="w-12 h-1 bg-slate-200 rounded-full mx-auto mb-6"></div>
+        <div class="flex justify-between items-center mb-6">
+            <h3 class="text-lg font-black italic text-slate-800">多维筛选</h3>
+            <span class="text-xs font-bold text-blue-600 underline cursor-pointer" onclick="resetFilters()">重置</span>
+        </div>
+        <div class="space-y-6">
+            <div>
+                <p class="text-[10px] font-black text-slate-400 uppercase mb-3 tracking-widest">任务归属</p>
+                <div class="flex gap-2">
+                    <button id="user-all" onclick="updateFilter('user', null, this)" class="filter-btn-active px-5 py-2 rounded-full border text-xs font-bold">全部</button>
+                    <button onclick="updateFilter('user', '我 (张三)', this)" class="px-5 py-2 rounded-full border border-slate-200 text-slate-500 text-xs font-bold">我经办的</button>
+                </div>
+            </div>
+            <div>
+                <p class="text-[10px] font-black text-slate-400 uppercase mb-3 tracking-widest">能源类型</p>
+                <div class="flex flex-wrap gap-2">
+                    <button id="energy-all" onclick="updateFilter('energy', null, this)" class="filter-btn-active px-5 py-2 rounded-lg border text-xs font-bold">全部</button>
+                    <button onclick="updateFilter('energy', '纯电', this)" class="px-5 py-2 rounded-lg border border-slate-200 text-slate-500 text-xs font-bold">纯电</button>
+                    <button onclick="updateFilter('energy', '增程', this)" class="px-5 py-2 rounded-lg border border-slate-200 text-slate-500 text-xs font-bold">增程</button>
+                    <button onclick="updateFilter('energy', '燃油', this)" class="px-5 py-2 rounded-lg border border-slate-200 text-slate-500 text-xs font-bold">燃油</button>
+                </div>
+            </div>
+        </div>
+        <button class="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-sm mt-8" onclick="renderList()">确定</button>
+    </div>
+</div>
+
+<script>
+const statusDefs = {
+    101:{stage:'采购',name:'确认车辆车况、钥匙数量、配置、车架号、交强险到期时间',produced:'记录车辆基础档案、交强险到期日',required:null,refs:null},
+    102:{stage:'采购',name:'确定车辆价格，记录内饰及外观受损情况，同步告知比什凯克负责人',produced:'上传初验照片、记录外观受损清单、记录车辆价格',required:null,refs:null},
+    103:{stage:'采购',name:'完成车辆付款',produced:'上传采购付款凭证/收据',required:null,refs:null},
+    104:{stage:'采购',name:'拍摄车辆照片及视频发送至比什凯克负责人，用于推广宣传',produced:'上传车辆宣传多媒体素材(照片/视频)',required:null,refs:null},
+    201:{stage:'整备',name:'去除前挡、主副驾玻璃膜',produced:'上传整备前/后对比照',required:null,refs:null},
+    202:{stage:'整备',name:'按需更换雨刮器、轮胎，判断是否需要钣金、喷漆',produced:'上传维修/更换配件清单及发票',required:null,refs:null},
+    203:{stage:'整备',name:'完成发动机基础保养',produced:'上传保养记录单',required:null,refs:null},
+    204:{stage:'整备',name:'新能源车根据比什凯克负责人需求，下单采购充电桩',produced:'上传充电桩采购合同、购买发票',required:null,refs:null},
+    301:{stage:'过户及出口待转移',name:'如果没交强险需要重新购买交强险',produced:'上传新交强险保单、保险缴费凭证',required:null,refs:'原车保单照片(101)'},
+    302:{stage:'过户及出口待转移',name:'本地牌照可以直接办理出口带转移',produced:'增值税专用发票、过户凭证',required:'试点公司公章、营业执照原件、委托人身份证原件、委托书、机动车登记证书、行驶证',refs:null},
+    303:{stage:'过户及出口待转移',name:'外地牌照需要先过户到当地背户公司,然后再办理出口待转移',produced:'增值税专用发票、背户协议',required:'背户公司和试点公司的公章及营业执照原件、委托人身份证原件、委托书、机动车登记证书、行驶证',refs:null},
+    304:{stage:'过户及出口待转移',name:'第三方检测机构出具二手车检验报告和自我声明',produced:'二手车检验报告、自我声明',required:null,refs:null},
+    305:{stage:'过户及出口待转移',name:'机动车检测站出新的机动车登记证书、行驶证以及二手车发票',produced:'新机动车登记证书、新行驶证照片',required:null,refs:null},
+    306:{stage:'过户及出口待转移',name:'支付上牌费、公安费、出口费用,并取得发票',produced:'各项规费发票/收据',required:null,refs:null},
+    401:{stage:'运输-成都至喀什',name:'与比什凯克负责人确定清关信息及收集资料',produced:'公司营业执照或个人身份证照片',required:null,refs:null},
+    501:{stage:'出口资质',name:'出口公司办理出口许可证以及装箱单',produced:'出口许可证、装箱单',required:'需提供清关、接车人资料',refs:'新行驶证(305)、吉国买方资料(401)'},
+    601:{stage:'国内报关',name:'国内报关资料核对',produced:'海关出口货物报关单、通关无纸化放行通知书、出口货物单证',required:'车辆出口许可证、吉尔吉斯本地人身份证或公司营业执照、外贸合同、车辆发票、车辆箱单、形式发票、报关单、委托报关协议、国际道路货物运单、车辆保单',refs:'许可证(501)、买方资料(401)、外贸合同（401）、车辆发票（305）'},
+    701:{stage:'运输-喀什至比什凯克',name:'与物流公司交车,确认车况,并告知比什凯克负责人',produced:'国际道路货物运单(CMR/TIR)',required:null,refs:null},
+    702:{stage:'运输-喀什至比什凯克',name:'与比什凯克负责人确定清关信息及收集资料',produced:'清关资料核对表',required:'公司营业执照或个人身份证照片',refs:'吉国买方公司营业执照或个人身份证照片(401)'},
+    801:{stage:'吉国清关',name:'清关人员接收车辆并验车,确认随车资料',produced:'到货验车单',required:null,refs:'新机动车登记证书(305)'},
+    802:{stage:'吉国清关',name:'确定车辆高清或者低清，是否享受电车免关税清关',produced:'关税计算核定表',required:null,refs:null},
+    803:{stage:'吉国清关',name:'回传清关资料扫描件给国内负责人,用于车辆退税',produced:'吉国清关资料扫描件(盖章版)',required:null,refs:null},
+    804:{stage:'吉国清关',name:'确认油车清关费用',produced:'清关费用明细及收据',required:null,refs:null},
+    805:{stage:'吉国清关',name:'国内注销',produced:'机动车注销证明书',required:'清关扫描件、新机动车登记证书',refs:'吉国清关资料扫描件(803)、新机动车登记证书(305)'},
+    901:{stage:'汽车销售',name:'汽车销售',produced:'销售确认单/交付协议',required:null,refs:null},
+    1001:{stage:'汽车上牌',name:'车辆上外面机构检测台,拿检测报告',produced:'吉国本地检测报告',required:null,refs:'吉国清关资料扫描件(803)'},
+    1002:{stage:'汽车上牌',name:'车管所检测台拍照上传信息',produced:'系统录入流水单/拍照存证',required:null,refs:'吉国本地检测报告(1001)'},
+    1003:{stage:'汽车上牌',name:'上户人员拍照',produced:'车辆上牌存档照片',required:null,refs:null},
+    1004:{stage:'汽车上牌',name:'上户大厅前台排号提交资料、缴费,取车牌和行驶证',produced:'吉国机动车登记证书、吉国行驶证、物理号牌照片',required:'检测报告、委托书、护照原件、翻译件、落地签、税号、人头照、海关清关盖章资料',refs:'检测报告(1001)、海关清关盖章资料(803)'},
+    1101:{stage:'保险购买',name:'保险购买',produced:'吉国本地保单、保险费发票/收据',required:null,refs:'吉国行驶证(1004)'},
+    1201:{stage:'车款打款回国',name:'车款打款回国',produced:'银行付款水单/支付凭证、回款合规性核查表',required:'外贸合同、清关资料',refs:'外贸合同(601)、清关资料(803)'},
+    1301:{stage:'美金结汇',name:'美金结汇',produced:'结汇水单',required:null,refs:null},
+    1401:{stage:'申请退税',name:'申请退税资料准备',produced:'退税申请受理回执',required:'13%增值税专用发票、XML格式报关单、外贸合同、运输合同、运输发票、比什凯克清关资料',refs:'增值税专票(302/303)、XML报关单(601)、外贸合同(601)'},
+    1501:{stage:'退税金额结算',name:'退税金额结算',produced:'退税入账凭证',required:null,refs:'退税申请(1401)'},
+    1601:{stage:'结算车辆成本',name:'结算车辆成本',produced:'单车利润分析报告',required:null,refs:'101-1501全环节财务单据'},
+};
+
+const stageColors = {
+    '采购':'bg-violet-100 text-violet-700','整备':'bg-amber-100 text-amber-700',
+    '过户及出口待转移':'bg-blue-100 text-blue-700','运输-成都至喀什':'bg-cyan-100 text-cyan-700',
+    '出口资质':'bg-indigo-100 text-indigo-700','国内报关':'bg-orange-100 text-orange-700',
+    '运输-喀什至比什凯克':'bg-teal-100 text-teal-700','吉国清关':'bg-green-100 text-green-700',
+    '汽车销售':'bg-pink-100 text-pink-700','汽车上牌':'bg-lime-100 text-lime-700',
+    '保险购买':'bg-sky-100 text-sky-700','车款打款回国':'bg-emerald-100 text-emerald-700',
+    '美金结汇':'bg-yellow-100 text-yellow-700','申请退税':'bg-rose-100 text-rose-700',
+    '退税金额结算':'bg-fuchsia-100 text-fuchsia-700','结算车辆成本':'bg-slate-100 text-slate-700',
+};
+// Short display names for list cards (long stage names break layout)
+const stageShort = {
+    '采购':'采购','整备':'整备',
+    '过户及出口待转移':'过户/出口','运输-成都至喀什':'运输·成都',
+    '出口资质':'出口资质','国内报关':'国内报关',
+    '运输-喀什至比什凯克':'运输·喀什','吉国清关':'吉国清关',
+    '汽车销售':'销售','汽车上牌':'上牌',
+    '保险购买':'购保险','车款打款回国':'打款回国',
+    '美金结汇':'结汇','申请退税':'申请退税',
+    '退税金额结算':'退税结算','结算车辆成本':'成本结算',
+};
+
+function generatePlate(energy) {
+    const pros=['京','沪','粤','浙','苏','鲁','川','皖'];
+    const pro=pros[Math.floor(Math.random()*pros.length)];
+    const city=String.fromCharCode(65+Math.floor(Math.random()*6));
+    const chars="ABCDEFGHJKLMNPQRSTUVWXYZ0123456789";
+    if(energy==='纯电'||energy==='增程'){
+        let num=(energy==='纯电'?'D':'F');
+        for(let i=0;i<5;i++)num+=chars.charAt(Math.floor(Math.random()*chars.length));
+        return `${pro}${city}·${num}`;
+    }else{
+        let num="";
+        for(let i=0;i<5;i++)num+=chars.charAt(Math.floor(Math.random()*chars.length));
+        return `${pro}${city}·${num}`;
+    }
+}
+
+// Real-format 17-digit VIN generator
+// Structure: WMI(3) + VDS(6) + VIS(8)
+// WMI: manufacturer codes matching real Chinese NEV makers
+function generateVin(energy) {
+    const wmis = {
+        '纯电': ['LSGBE','LSV7E','LKL4E','LFV4C','LS5E4','LVVDB','LB1GC','LJNFE'],
+        '增程': ['L6T5B','LSJA2','LFV4C','LS5E4'],
+        '燃油': ['LGWEF','LSVCC','LFV4A','LHGCM','LNBSCC','LVVDB'],
+    };
+    const pool = wmis[energy] || wmis['燃油'];
+    const wmi = pool[Math.floor(Math.random() * pool.length)];
+    const chars = 'ABCDEFGHJKLMNPRSTUVWXYZ0123456789'; // no I,O,Q
+    // VDS: 6 chars (vehicle descriptor)
+    let vds = '';
+    for(let i=0;i<6;i++) vds += chars[Math.floor(Math.random()*chars.length)];
+    // VIS: 8 chars, last 4 are digits (serial)
+    const year = ['M','N','P','R','S','T','V','W','X','Y','1','2','3','4','5'][Math.floor(Math.random()*15)];
+    const plant = chars[Math.floor(Math.random()*chars.length)];
+    const serial = String(Math.floor(Math.random()*9999)+1).padStart(6,'0');
+    return (wmi + vds + year + plant + serial).substring(0,17).toUpperCase();
+}
+
+const brands=['比亚迪 宋Plus','理想 L9 Max','特斯拉 Model 3','极氪 001','问界 M7','小鹏 G9','蔚来 ES6','奔驰 E300L','丰田 凯美瑞'];
+const colors=['珍珠白','星际黑','极光银','深海蓝','熔岩红'];
+const configs=['100kWh电池, 钥匙×2, 全景天幕','增程版, 钥匙×1, 无天幕','2.0T燃油, 钥匙×2, 皮质座椅'];
+const damages=['左前门轻微划痕，前保险杠小凹陷','外观完好无损','后保险杠剐蹭，内饰良好'];
+const users=['我 (张三)','李思源','王建国','赵明明'];
+const statusCodes=[101,102,103,104,201,202,203,301,302,401,501,601,701,801,901];
+
+let rawData=[];
+for(let i=0;i<20;i++){
+    const energy=['纯电','增程','燃油'][Math.floor(Math.random()*3)];
+    const day=Math.floor(Math.random()*28)+1;
+    const statusCode=statusCodes[Math.floor(Math.random()*statusCodes.length)];
+    const def=statusDefs[statusCode];
+    rawData.push({
+        id:i, model:brands[Math.floor(Math.random()*brands.length)],
+        vin:generateVin(energy),
+        energy, plate:generatePlate(energy),
+        plateType:Math.random()>0.5?'本地车牌':'外地车牌',
+        color:colors[Math.floor(Math.random()*colors.length)],
+        config:configs[Math.floor(Math.random()*configs.length)],
+        damage:damages[Math.floor(Math.random()*damages.length)],
+        purchasePrice:(Math.random()*20+10).toFixed(2),
+        statusCode, stageName:def.stage, statusName:def.name,
+        user:users[Math.floor(Math.random()*users.length)],
+        date:`03-${day<10?'0'+day:day}`, fullDate:`2024-03-${day<10?'0'+day:day}`,
+        pColor:energy==='燃油'?(Math.random()>0.5?'bg-blue-600 text-white':'bg-yellow-400 text-black'):'',
+        customsAt:Math.random()>0.5?`2024-02-${String(Math.floor(Math.random()*20)+1).padStart(2,'0')}`:null,
+    });
+}
+
+let currentFilters={user:null,energy:null};
+let currentSort={key:'fullDate',order:'desc'};
+let searchQuery="";
+let currentItem=null;
+let handleBackPage='page-detail';
+
+function showPage(id){
+    document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    window.scrollTo(0,0);
+}
+
+function openDetailThenHandle(itemId){
+    currentItem=rawData.find(d=>d.id===itemId);
+    handleBackPage='page-list';
+    openHandle();
+}
+
+function openDetail(itemId){
+    currentItem=rawData.find(d=>d.id===itemId);
+    renderDetail();
+    showPage('page-detail');
+}
+function openHandle(fromPage){
+    if(fromPage) handleBackPage=fromPage;
+    renderHandle();
+    showPage('page-handle');
+}
+
+function openSearch(){
+    document.getElementById('header-title').classList.add('hidden');
+    document.getElementById('header-actions').classList.add('hidden');
+    document.getElementById('search-bar').classList.add('active');
+    document.getElementById('search-input').focus();
+}
+function closeSearch(){
+    document.getElementById('header-title').classList.remove('hidden');
+    document.getElementById('header-actions').classList.remove('hidden');
+    document.getElementById('search-bar').classList.remove('active');
+    document.getElementById('search-input').value="";
+    searchQuery=""; renderList();
+}
+function handleSearch(){
+    searchQuery=document.getElementById('search-input').value.toLowerCase();
+    renderList();
+}
+
+function renderList(){
+    const container=document.getElementById('list-container');
+    let filtered=rawData.filter(item=>{
+        const s=searchQuery;
+        const searchMatch=!s||item.model.toLowerCase().includes(s)||item.vin.toLowerCase().includes(s)||item.user.toLowerCase().includes(s)||item.plate.toLowerCase().includes(s);
+        return(!currentFilters.user||item.user===currentFilters.user)&&(!currentFilters.energy||item.energy===currentFilters.energy)&&searchMatch;
+    });
+    filtered.sort((a,b)=>{
+        let valA=a[currentSort.key],valB=b[currentSort.key];
+        return currentSort.order==='asc'?valA.localeCompare(valB):valB.localeCompare(valA);
+    });
+    container.innerHTML=filtered.map(item=>{
+        const isMe=item.user.includes('我');
+        const isGreen=item.energy!=='燃油';
+        const stageColor=stageColors[item.stageName]||'bg-slate-100 text-slate-600';
+        return `
+        <div class="p-3.5 flex flex-col gap-2 border-b active:bg-slate-50 transition-colors cursor-pointer" style="opacity:${isMe?1:0.65}" onclick="openDetail(${item.id})">
+            <div class="flex items-center gap-2 overflow-hidden">
+                <div class="flex items-center gap-1.5 flex-shrink-0">
+                    <span class="energy-label ${item.energy==='纯电'?'bg-emerald-600':(item.energy==='增程'?'bg-orange-500':'bg-slate-500')} text-white">${item.energy}</span>
+                    <span class="${isGreen?'plate-ev':'plate-std '+item.pColor} italic font-mono">${item.plate}</span>
+                </div>
+                <h2 class="text-[16px] font-extrabold text-slate-800 tracking-tight truncate flex-1 min-w-0">${item.model}</h2>
+                <span class="status-pill ${stageColor} flex-shrink-0">${stageShort[item.stageName]||item.stageName}</span>
+            </div>
+            <div class="flex items-center gap-2 ${isMe?'bg-blue-50/60 border-blue-100':'bg-slate-50 border-slate-100'} px-2 py-1 rounded border">
+                <div class="flex items-center gap-1 text-slate-400 pr-2 border-r border-slate-200">
+                    <i data-lucide="calendar" class="w-3 h-3"></i>
+                    <span class="text-[10px] font-bold font-mono">${item.date}</span>
+                </div>
+                <span class="vin-font text-[12px] ${isMe?'text-slate-700 font-bold':'text-slate-400 font-medium'} uppercase tracking-tighter truncate"><span class="text-[9px] font-black text-slate-400 mr-0.5">VIN:</span>${item.vin}</span>
+                <div class="ml-auto flex-shrink-0 ${isMe?'cursor-pointer active:opacity-60':''}"
+                    ${isMe?`onclick="event.stopPropagation();openDetailThenHandle(${item.id})"`:''}>
+                    <div class="flex items-center gap-1 ${isMe?'text-blue-700':'text-slate-400'}">
+                        <i data-lucide="${isMe?'user-check':'user'}" class="w-3 h-3"></i>
+                        <span class="text-[10px] ${isMe?'font-black':'font-bold'}">${item.user}</span>
+                        ${isMe?'<i data-lucide="chevron-right" class="w-3 h-3 opacity-40"></i>':''}
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+    lucide.createIcons();
+    toggleSheet('filter-sheet',true);
+    toggleSheet('sort-sheet',true);
+    if(isPC()) renderPcTable();
+}
+
+function mockHistory(statusCode){
+    const allCodes=Object.keys(statusDefs).map(Number).sort((a,b)=>a-b);
+    const idx=allCodes.indexOf(statusCode);
+    const done=allCodes.slice(Math.max(0,idx-3),idx);
+    // Generate realistic sequential dates going back from today
+    const baseDay = 15;
+    const result=done.map((code,i)=>({
+        code,status:'done',
+        handler:['李思源','王建国','赵明明','张三'][i%4],
+        date:`2024-03-${String(baseDay - (done.length - i) * 3).padStart(2,'0')}`
+    }));
+    result.push({code:statusCode,status:'current',handler:'我 (张三)',date:'进行中'});
+    return result.reverse();
+}
+
+function renderDetail(){
+    const v=currentItem; if(!v)return;
+    const def=statusDefs[v.statusCode];
+    const isMe=v.user.includes('我');
+    const isGreen=v.energy!=='燃油';
+    const stageColor=stageColors[v.stageName]||'bg-slate-100 text-slate-600';
+    const history=mockHistory(v.statusCode);
+
+    document.getElementById('detail-content').innerHTML=`
+        <div class="p-4 border-b">
+            <div class="flex items-start justify-between gap-2 mb-3">
+                <div>
+                    <h2 class="text-2xl font-black text-slate-800 tracking-tight">${v.model}</h2>
+                    <div class="flex items-center gap-2 mt-1.5 flex-wrap">
+                        <span class="energy-label ${v.energy==='纯电'?'bg-emerald-600':(v.energy==='增程'?'bg-orange-500':'bg-slate-500')} text-white">${v.energy}</span>
+                        <span class="${isGreen?'plate-ev':'plate-std '+v.pColor} italic font-mono">${v.plate}</span>
+                        <span class="text-xs text-slate-400 font-bold">${v.plateType}</span>
+                    </div>
+                </div>
+                <span class="status-pill ${stageColor} mt-1 flex-shrink-0">${v.stageName}</span>
+            </div>
+            <div class="grid grid-cols-2 gap-2 mt-3">
+                <div class="bg-slate-50 rounded-xl p-3 col-span-2">
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">VIN 码</p>
+                    <p class="vin-font text-sm font-bold text-slate-700 break-all">${v.vin}</p>
+                </div>
+                <div class="bg-slate-50 rounded-xl p-3">
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">颜色</p>
+                    <p class="text-sm font-bold text-slate-700">${v.color}</p>
+                </div>
+                <div class="bg-slate-50 rounded-xl p-3">
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">采购价</p>
+                    <p class="text-sm font-bold text-slate-700">¥${v.purchasePrice}万</p>
+                </div>
+                <div class="bg-slate-50 rounded-xl p-3 col-span-2">
+                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">配置信息</p>
+                    <p class="text-sm font-medium text-slate-600">${v.config}</p>
+                </div>
+            </div>
+            <div class="bg-amber-50 border border-amber-100 rounded-xl p-3 mt-2">
+                <p class="text-[10px] font-black text-amber-500 uppercase tracking-widest mb-1">受损情况</p>
+                <p class="text-sm font-medium text-amber-800">${v.damage}</p>
+            </div>
+            ${v.customsAt?`<div class="bg-green-50 border border-green-100 rounded-xl p-3 mt-2"><p class="text-[10px] font-black text-green-500 uppercase tracking-widest mb-1">清关时间</p><p class="text-sm font-bold text-green-800">${v.customsAt}</p></div>`:''}
+        </div>
+
+        <div class="p-4 border-b">
+            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">当前作业阶段</p>
+            <div class="bg-blue-50 border border-blue-200 rounded-2xl p-4">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-black text-blue-600">状态 #${v.statusCode}</span>
+                    <span class="status-pill ${stageColor}">${v.stageName}</span>
+                </div>
+                <p class="text-sm font-bold text-slate-800 leading-snug mb-3">${def.name}</p>
+                ${def.produced?`<div class="mb-2 pb-2 border-b border-blue-100"><p class="text-[10px] font-black text-slate-400 mb-1">📄 本阶段产生资料</p><p class="text-xs text-slate-600 leading-relaxed">${def.produced}</p></div>`:''}
+                ${def.required?`<div class="mb-2 pb-2 border-b border-blue-100"><p class="text-[10px] font-black text-slate-400 mb-1">📋 所需资料</p><p class="text-xs text-slate-600 leading-relaxed">${def.required}</p></div>`:''}
+                ${def.refs?`<div><p class="text-[10px] font-black text-slate-400 mb-1">🔗 前置引用资料</p><p class="text-xs text-blue-600 leading-relaxed font-semibold">${def.refs}</p></div>`:''}
+            </div>
+            <div class="flex items-center justify-between mt-3">
+                <div class="flex items-center gap-2">
+                    <div class="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-black">${v.user.replace(/[（(].*/,"").trim().slice(-1)}</div>
+                    <div>
+                        <p class="text-xs font-black text-slate-700">${v.user}</p>
+                        <p class="text-[10px] text-slate-400">当前经办人</p>
+                    </div>
+                </div>
+                ${isMe?`<button onclick="openHandle('page-detail')" class="flex items-center gap-1 bg-blue-600 text-white text-xs font-black px-4 py-2 rounded-full"><i data-lucide="arrow-right-circle" class="w-3.5 h-3.5"></i>去办理</button>`:''}
+            </div>
+        </div>
+
+        <div class="p-4">
+            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">流转历史</p>
+            <div class="space-y-3">
+                ${history.map((h,idx)=>{
+                    const hDef=statusDefs[h.code];
+                    const isCurrent=h.status==='current';
+                    const isLast=idx===history.length-1;
+                    return `
+                    <div class="relative flex gap-3 ${!isLast?'pb-1':''}">
+                        ${!isLast?`<div class="timeline-connector"></div>`:''}
+                        <div class="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center mt-0.5 z-10 ${isCurrent?'bg-blue-600':'bg-slate-200'}">
+                            ${isCurrent?'<i data-lucide="loader-2" class="w-3 h-3 text-white"></i>':'<i data-lucide="check" class="w-3 h-3 text-slate-500"></i>'}
+                        </div>
+                        <div class="flex-1 ${isCurrent?'bg-blue-50 border border-blue-200':'bg-slate-50'} rounded-xl p-3">
+                            <div class="flex items-center justify-between mb-1">
+                                <span class="text-[10px] font-black ${isCurrent?'text-blue-600':'text-slate-400'}">#${h.code} ${hDef?.stage||''}</span>
+                                <span class="text-[10px] text-slate-400 font-mono">${h.date}</span>
+                            </div>
+                            <p class="text-xs font-semibold text-slate-700 leading-snug">${hDef?.name||''}</p>
+                            <p class="text-[10px] text-slate-400 mt-1">经办：${h.handler}</p>
+                        </div>
+                    </div>`;
+                }).join('')}
+            </div>
+        </div>
+    `;
+    lucide.createIcons();
+}
+
+function renderHandle(){
+    const v=currentItem; if(!v)return;
+    const def=statusDefs[v.statusCode];
+    const stageColor=stageColors[v.stageName]||'bg-slate-100 text-slate-600';
+    const producedItems=def.produced?def.produced.split('、'):[];
+    const requiredItems=def.required?def.required.split(/[;；、]/).filter(s=>s.trim()):[];
+
+    document.getElementById('handle-content').innerHTML=`
+        <div class="p-4 border-b bg-slate-50">
+            <div class="flex items-center gap-3">
+                <div class="w-11 h-11 rounded-xl bg-blue-600 flex items-center justify-center text-white font-black text-sm flex-shrink-0">${v.statusCode}</div>
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-extrabold text-slate-800 truncate">${v.model}</p>
+                    <p class="vin-font text-[11px] text-slate-400 truncate"><span class="font-black mr-0.5">VIN:</span>${v.vin}</p>
+                </div>
+                <span class="status-pill ${stageColor} flex-shrink-0">${v.stageName}</span>
+            </div>
+        </div>
+
+        <div class="p-4 border-b">
+            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">本次作业任务</p>
+            <p class="text-sm font-bold text-slate-800 leading-relaxed">${def.name}</p>
+        </div>
+
+        ${requiredItems.length>0?`
+        <div class="p-4 border-b">
+            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">📋 所需资料核对</p>
+            <div class="space-y-2.5">
+                ${requiredItems.map(item=>`
+                <label class="flex items-start gap-2.5 cursor-pointer select-none">
+                    <input type="checkbox" class="w-4 h-4 mt-0.5 accent-blue-600 flex-shrink-0">
+                    <span class="text-sm text-slate-600 font-medium leading-snug">${item.trim()}</span>
+                </label>`).join('')}
+            </div>
+        </div>`:''}
+
+        ${def.refs?`
+        <div class="p-4 border-b">
+            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">🔗 需引用前置资料</p>
+            <p class="text-xs text-blue-600 font-semibold leading-relaxed">${def.refs}</p>
+        </div>`:''}
+
+        <div class="p-4 border-b">
+            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">📄 上传本阶段资料</p>
+            <div class="space-y-3">
+                ${producedItems.map((item,i)=>`
+                <div id="upload-${i}" class="border-2 border-dashed border-slate-200 rounded-2xl p-4 flex items-center gap-3 cursor-pointer hover:border-blue-300 hover:bg-blue-50/40 transition-colors" onclick="mockUpload(this,'${item.trim().replace(/'/g,'').replace(/"/g,'')}')">
+                    <div class="w-9 h-9 rounded-xl bg-slate-100 flex items-center justify-center flex-shrink-0">
+                        <i data-lucide="upload-cloud" class="w-4 h-4 text-slate-400"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-sm font-bold text-slate-700 truncate">${item.trim()}</p>
+                        <p class="upload-hint text-[10px] text-slate-400">点击上传文件 / 拍照</p>
+                    </div>
+                    <i data-lucide="plus-circle" class="w-5 h-5 text-slate-300 flex-shrink-0 upload-icon"></i>
+                </div>`).join('')}
+            </div>
+        </div>
+
+        <div class="p-4">
+            <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">备注说明</p>
+            <textarea rows="3" placeholder="填写本环节关键说明或异常情况..." class="w-full border border-slate-200 rounded-2xl p-3 text-sm text-slate-700 outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100 resize-none font-medium placeholder:text-slate-300"></textarea>
+        </div>
+    `;
+    lucide.createIcons();
+}
+
+function mockUpload(el){
+    el.classList.remove('border-dashed','border-slate-200');
+    el.classList.add('border-solid','border-green-400','bg-green-50');
+    el.querySelector('[data-lucide="upload-cloud"]').setAttribute('data-lucide','file-check');
+    el.querySelector('.upload-hint').textContent='已上传 · 模拟文件.pdf';
+    el.querySelector('.upload-hint').classList.add('text-green-600');
+    el.querySelector('.upload-icon').setAttribute('data-lucide','check-circle-2');
+    el.querySelector('.upload-icon').classList.remove('text-slate-300');
+    el.querySelector('.upload-icon').classList.add('text-green-500');
+    lucide.createIcons();
+}
+
+function showToast(msg){
+    const t=document.createElement('div');
+    t.className='fixed bottom-32 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-sm font-bold px-5 py-3 rounded-full z-[200] shadow-lg whitespace-nowrap';
+    t.textContent=msg; document.body.appendChild(t);
+    setTimeout(()=>t.remove(),2000);
+}
+function handleSave(){ showToast('已保存草稿 ✓'); }
+function handleComplete(){ showToast('本阶段已完成，流转至下一环节 🎉'); setTimeout(()=>showPage(handleBackPage),1500); }
+
+function setSort(key,order){ currentSort={key,order}; renderList(); }
+function updateSortUI(){
+    const opts=[
+        {key:'fullDate',order:'desc',label:'时间：最新优先'},
+        {key:'fullDate',order:'asc',label:'时间：最早优先'},
+        {key:'model',order:'asc',label:'车型：A - Z'}
+    ];
+    document.getElementById('sort-options').innerHTML=opts.map(opt=>`
+        <button onclick="setSort('${opt.key}','${opt.order}')" class="w-full p-4 text-left font-bold rounded-xl flex justify-between items-center ${currentSort.key===opt.key&&currentSort.order===opt.order?'bg-blue-50 text-blue-600 border-2 border-blue-600':'border border-slate-100 text-slate-500'}">
+            ${opt.label} ${currentSort.key===opt.key&&currentSort.order===opt.order?'<i data-lucide="check" class="w-4 h-4"></i>':''}
+        </button>
+    `).join('');
+    lucide.createIcons();
+}
+function updateFilter(type,value,el){
+    Array.from(el.parentNode.children).forEach(b=>b.className="px-5 py-2 rounded-full border border-slate-200 text-slate-500 text-xs font-bold");
+    if(type==='energy')Array.from(el.parentNode.children).forEach(b=>b.classList.replace('rounded-full','rounded-lg'));
+    el.className="filter-btn-active px-5 py-2 rounded-full border text-xs font-bold";
+    if(type==='energy')el.classList.replace('rounded-full','rounded-lg');
+    currentFilters[type]=value;
+}
+function resetFilters(){
+    currentFilters={user:null,energy:null};
+    updateFilter('user',null,document.getElementById('user-all'));
+    updateFilter('energy',null,document.getElementById('energy-all'));
+    renderList();
+}
+function toggleSheet(id,forceClose=false){
+    const sheet=document.getElementById(id);
+    const overlay=document.getElementById(id+'-overlay');
+    if(id==='sort-sheet')updateSortUI();
+    if(sheet.classList.contains('hidden-sheet')&&!forceClose){
+        overlay.classList.remove('hidden');
+        setTimeout(()=>{overlay.classList.add('show');sheet.classList.remove('hidden-sheet');},10);
+    }else{
+        overlay.classList.remove('show');sheet.classList.add('hidden-sheet');
+        setTimeout(()=>overlay.classList.add('hidden'),300);
+    }
+}
+
+// ===== CREATE PAGE =====
+let createForm = {};
+
+function openCreate() {
+    createForm = {};
+    renderCreateForm();
+    showPage('page-create');
+}
+
+function renderCreateForm() {
+    document.getElementById('create-content').innerHTML = `
+        <div class="p-5 space-y-6">
+
+            <!-- Section: 基础信息 -->
+            <div>
+                <div class="flex items-center gap-2 mb-4">
+                    <div class="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-black flex-shrink-0">1</div>
+                    <h2 class="text-sm font-black text-slate-700 uppercase tracking-widest">基础信息</h2>
+                </div>
+
+                <!-- VIN -->
+                <div class="mb-4">
+                    <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">VIN 码 <span class="text-red-500">*</span></label>
+                    <div class="flex gap-2">
+                        <div class="flex-1 relative">
+                            <input id="c-vin" type="text" maxlength="17" placeholder="输入或粘贴 17 位 VIN 码"
+                                class="vin-font w-full border-2 border-slate-200 rounded-xl px-3 py-3 text-sm font-bold uppercase outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 tracking-widest pr-12 placeholder:font-normal placeholder:normal-case placeholder:tracking-normal"
+                                oninput="this.value=this.value.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g,'');updateVinCounter()"
+                            onpaste="setTimeout(()=>{this.value=this.value.toUpperCase().replace(/[^A-HJ-NPR-Z0-9]/g,'').substring(0,17);updateVinCounter()},0)">
+                            <span id="vin-counter" class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-300">0/17</span>
+                        </div>
+                        <button onclick="mockScanVin()" title="扫码识别" class="w-12 h-12 bg-slate-100 hover:bg-blue-50 rounded-xl flex items-center justify-center flex-shrink-0 border-2 border-slate-200 hover:border-blue-300 transition-colors">
+                            <i data-lucide="scan-line" class="w-5 h-5 text-slate-500"></i>
+                        </button>
+                    </div>
+                    <p class="text-[10px] text-slate-400 mt-1.5">支持粘贴自动格式化 · 扫码识别 · 手动输入</p>
+                </div>
+
+                <!-- Model -->
+                <div class="mb-4">
+                    <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">车型名称 <span class="text-red-500">*</span></label>
+                    <input id="c-model" type="text" placeholder="如：极氪 001 2023款"
+                        class="w-full border-2 border-slate-200 rounded-xl px-3 py-3 text-sm font-bold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+                    <div class="flex flex-wrap gap-1.5 mt-2">
+                        ${['比亚迪 宋Plus','理想 L9','极氪 001','问界 M7','特斯拉 Model 3'].map(b =>
+                            `<button onclick="document.getElementById('c-model').value='${b}'" class="px-2.5 py-1 bg-slate-100 hover:bg-blue-50 rounded-lg text-[11px] font-bold text-slate-500 hover:text-blue-600 transition-colors">${b}</button>`
+                        ).join('')}
+                    </div>
+                </div>
+
+                <!-- Energy -->
+                <div class="mb-4">
+                    <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">能源类型 <span class="text-red-500">*</span></label>
+                    <div class="grid grid-cols-3 gap-2">
+                        ${[{val:'纯电',icon:'zap',ac:'text-emerald-600 bg-emerald-50 border-emerald-300'},{val:'增程',icon:'battery-charging',ac:'text-orange-600 bg-orange-50 border-orange-300'},{val:'燃油',icon:'fuel',ac:'text-slate-700 bg-slate-100 border-slate-400'}].map(e =>
+                            `<button id="energy-btn-${e.val}" onclick="selectEnergy('${e.val}','${e.ac}')"
+                                class="energy-select-btn py-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-colors border-slate-200 text-slate-400">
+                                <i data-lucide="${e.icon}" class="w-5 h-5"></i>
+                                <span class="text-xs font-black">${e.val}</span>
+                            </button>`
+                        ).join('')}
+                    </div>
+                </div>
+
+                <!-- Plate type + Color row -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">车牌归属</label>
+                        <div class="flex flex-col gap-1.5">
+                            ${['本地车牌','外地车牌'].map(t =>
+                                `<button onclick="selectPlateType('${t}')" class="plate-type-btn py-2 rounded-xl border-2 text-xs font-black transition-colors border-slate-200 text-slate-400">${t}</button>`
+                            ).join('')}
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">颜色</label>
+                        <div class="flex flex-wrap gap-1.5">
+                            ${['珍珠白','星际黑','极光银','深海蓝','熔岩红','其他'].map(c =>
+                                `<button onclick="selectColor('${c}')" class="color-btn px-2 py-1 rounded-lg border-2 text-[11px] font-bold transition-colors border-slate-200 text-slate-400">${c}</button>`
+                            ).join('')}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="border-t border-slate-100"></div>
+
+            <!-- Section: 配置与受损 -->
+            <div>
+                <div class="flex items-center gap-2 mb-4">
+                    <div class="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-black flex-shrink-0">2</div>
+                    <h2 class="text-sm font-black text-slate-700 uppercase tracking-widest">配置与受损</h2>
+                </div>
+
+                <!-- Price -->
+                <div class="mb-4">
+                    <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">采购价（万元）</label>
+                    <div class="relative">
+                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-black text-sm">¥</span>
+                        <input id="c-price" type="number" step="0.01" placeholder="0.00"
+                            class="w-full border-2 border-slate-200 rounded-xl pl-7 pr-12 py-3 text-sm font-bold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+                        <span class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold">万</span>
+                    </div>
+                </div>
+
+                <!-- Config -->
+                <div class="mb-4">
+                    <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">配置信息</label>
+                    <textarea id="c-config" rows="2" placeholder="如：100kWh电池, 钥匙×2, 全景天幕..."
+                        class="w-full border-2 border-slate-200 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none placeholder:text-slate-300"></textarea>
+                </div>
+
+                <!-- Damage -->
+                <div class="mb-4">
+                    <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">外观受损情况</label>
+                    <textarea id="c-damage" rows="2" placeholder="如：左前门轻微划痕；若无受损填「外观完好无损」"
+                        class="w-full border-2 border-slate-200 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none placeholder:text-slate-300"></textarea>
+                    <div class="flex flex-wrap gap-1.5 mt-2">
+                        ${['外观完好无损','轻微划痕','保险杠剐蹭','玻璃破损'].map(d =>
+                            `<button onclick="document.getElementById('c-damage').value='${d}'" class="px-2.5 py-1 bg-slate-100 hover:bg-amber-50 rounded-lg text-[11px] font-bold text-slate-500 hover:text-amber-600 transition-colors">${d}</button>`
+                        ).join('')}
+                    </div>
+                </div>
+
+                <!-- Plates -->
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">原始车牌号</label>
+                        <input id="c-plate-old" type="text" placeholder="川A·12345"
+                            class="vin-font w-full border-2 border-slate-200 rounded-xl px-3 py-3 text-sm font-bold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">当前车牌号</label>
+                        <input id="c-plate-now" type="text" placeholder="川A·D1234"
+                            class="vin-font w-full border-2 border-slate-200 rounded-xl px-3 py-3 text-sm font-bold outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100">
+                    </div>
+                </div>
+            </div>
+
+            <div class="border-t border-slate-100"></div>
+
+            <!-- Section: 指派与备注 -->
+            <div>
+                <div class="flex items-center gap-2 mb-4">
+                    <div class="w-5 h-5 rounded-full bg-blue-600 flex items-center justify-center text-white text-[10px] font-black flex-shrink-0">3</div>
+                    <h2 class="text-sm font-black text-slate-700 uppercase tracking-widest">指派与备注</h2>
+                </div>
+
+                <div class="mb-4">
+                    <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">指派经办人 <span class="text-red-500">*</span></label>
+                    <div class="grid grid-cols-2 gap-2">
+                        ${['我 (张三)','李思源','王建国','赵明明'].map(u =>
+                            `<button onclick="selectAssignee('${u}')"
+                                class="assignee-btn py-2.5 rounded-xl border-2 text-xs font-black transition-colors flex items-center justify-center gap-1.5 border-slate-200 text-slate-400">
+                                <i data-lucide="${u.includes('我')?'user-check':'user'}" class="w-3.5 h-3.5"></i>${u}
+                            </button>`
+                        ).join('')}
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-black text-slate-500 uppercase tracking-widest mb-2">备注</label>
+                    <textarea id="c-remark" rows="2" placeholder="录入备注（选填）"
+                        class="w-full border-2 border-slate-200 rounded-xl px-3 py-3 text-sm font-medium outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100 resize-none placeholder:text-slate-300"></textarea>
+                </div>
+            </div>
+
+        </div>
+    `;
+    lucide.createIcons();
+}
+
+function updateVinCounter() {
+    const v = document.getElementById('c-vin').value;
+    const c = document.getElementById('vin-counter');
+    c.textContent = v.length+'/17';
+    c.className = `absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-bold ${v.length===17?'text-emerald-500':'text-slate-300'}`;
+}
+function mockScanVin() {
+    const e = createForm.energy || ['纯电','增程','燃油'][Math.floor(Math.random()*3)];
+    document.getElementById('c-vin').value = generateVin(e);
+    updateVinCounter(); showToast('扫码识别成功 ✓');
+}
+function selectEnergy(val, activeClass) {
+    createForm.energy = val;
+    document.querySelectorAll('.energy-select-btn').forEach(btn => {
+        const isActive = btn.id === 'energy-btn-' + val;
+        btn.className = `energy-select-btn py-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-colors ${isActive ? activeClass : 'border-slate-200 text-slate-400'}`;
+    });
+}
+function selectPlateType(val) {
+    createForm.plateType = val;
+    document.querySelectorAll('.plate-type-btn').forEach(btn => {
+        btn.className = `plate-type-btn py-2 rounded-xl border-2 text-xs font-black transition-colors ${btn.textContent.trim()===val?'border-blue-500 bg-blue-50 text-blue-600':'border-slate-200 text-slate-400'}`;
+    });
+}
+function selectColor(val) {
+    createForm.color = val;
+    document.querySelectorAll('.color-btn').forEach(btn => {
+        btn.className = `color-btn px-2 py-1 rounded-lg border-2 text-[11px] font-bold transition-colors ${btn.textContent.trim()===val?'border-blue-500 bg-blue-50 text-blue-600':'border-slate-200 text-slate-400'}`;
+    });
+}
+function selectAssignee(val) {
+    createForm.assignee = val;
+    document.querySelectorAll('.assignee-btn').forEach(btn => {
+        const isActive = btn.textContent.trim() === val;
+        btn.className = `assignee-btn py-2.5 rounded-xl border-2 text-xs font-black transition-colors flex items-center justify-center gap-1.5 ${isActive?'border-blue-500 bg-blue-50 text-blue-600':'border-slate-200 text-slate-400'}`;
+    });
+}
+function createSubmit() {
+    const vin = document.getElementById('c-vin')?.value.trim() || '';
+    const model = document.getElementById('c-model')?.value.trim() || '';
+    if (!vin || vin.length < 6) { showToast('请填写 VIN 码 ⚠️'); return; }
+    if (!model) { showToast('请填写车型名称 ⚠️'); return; }
+    if (!createForm.energy) { showToast('请选择能源类型 ⚠️'); return; }
+    if (!createForm.assignee) { showToast('请指派经办人 ⚠️'); return; }
+    const energy = createForm.energy;
+    const day = new Date().getDate();
+    rawData.unshift({
+        id: Date.now(), model,  vin,
+        energy, plate: document.getElementById('c-plate-now')?.value.trim() || generatePlate(energy),
+        plateType: createForm.plateType || '本地车牌',
+        color: createForm.color || '未填写',
+        config: document.getElementById('c-config')?.value.trim() || '—',
+        damage: document.getElementById('c-damage')?.value.trim() || '—',
+        purchasePrice: document.getElementById('c-price')?.value.trim() || '0.00',
+        statusCode: 101, stageName: '采购', statusName: statusDefs[101].name,
+        user: createForm.assignee,
+        date: `03-${String(day).padStart(2,'0')}`, fullDate: `2024-03-${String(day).padStart(2,'0')}`,
+        pColor: energy==='燃油'?'bg-blue-600 text-white':'', customsAt: null,
+    });
+    showToast('车辆录入成功 🎉');
+    setTimeout(() => { renderList(); if(isPC()) renderPcTable(); showPage('page-list'); }, 900);
+}
+
+// ===== PC TABLE =====
+let pcPage = 1;
+const PC_PAGE_SIZE = 12;
+let pcSort_key = 'fullDate';
+let pcSort_order = 'desc';
+let pcSearchQuery = '';
+let pcEnergyFilter = '';
+let pcUserFilter = '';
+
+function isPC() { return window.innerWidth >= 900; }
+
+function getPcFiltered() {
+    return rawData.filter(item => {
+        const s = pcSearchQuery.toLowerCase();
+        const searchMatch = !s || item.model.toLowerCase().includes(s) || item.vin.toLowerCase().includes(s) || item.user.toLowerCase().includes(s) || item.plate.toLowerCase().includes(s);
+        return (!pcEnergyFilter || item.energy === pcEnergyFilter)
+            && (!pcUserFilter || item.user === pcUserFilter)
+            && searchMatch;
+    }).sort((a, b) => {
+        let vA = a[pcSort_key] ?? '', vB = b[pcSort_key] ?? '';
+        if (pcSort_key === 'purchasePrice') { vA = parseFloat(vA)||0; vB = parseFloat(vB)||0; return pcSort_order==='asc'? vA-vB : vB-vA; }
+        return pcSort_order==='asc' ? String(vA).localeCompare(String(vB)) : String(vB).localeCompare(String(vA));
+    });
+}
+
+function renderPcTable() {
+    if (!isPC()) return;
+    const filtered = getPcFiltered();
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / PC_PAGE_SIZE));
+    if (pcPage > totalPages) pcPage = totalPages;
+    const pageData = filtered.slice((pcPage-1)*PC_PAGE_SIZE, pcPage*PC_PAGE_SIZE);
+
+    // Badge
+    document.getElementById('pc-total-badge').textContent = `共 ${total} 辆`;
+
+    // Sort icons
+    ['model','purchasePrice','fullDate'].forEach(k => {
+        const el = document.getElementById('sort-icon-'+k);
+        if (!el) return;
+        el.textContent = pcSort_key===k ? (pcSort_order==='asc'?'↑':'↓') : '↕';
+        el.style.color = pcSort_key===k ? '#2563eb' : '#cbd5e1';
+    });
+
+    // Table body
+    const tbody = document.getElementById('pc-table-body');
+    if (!tbody) return;
+
+    tbody.innerHTML = pageData.map(item => {
+        const isMe = item.user.includes('我');
+        const isGreen = item.energy !== '燃油';
+        const stageColor = stageColors[item.stageName] || 'bg-slate-100 text-slate-600';
+        const energyColor = item.energy==='纯电'?'bg-emerald-600':(item.energy==='增程'?'bg-orange-500':'bg-slate-500');
+        return `<tr class="pc-row cursor-pointer" onclick="openDetail(${item.id})">
+            <td class="px-4 py-3">
+                <div class="font-extrabold text-slate-800 text-sm whitespace-nowrap">${item.model}</div>
+                <div class="text-xs text-slate-400 font-medium mt-0.5">${item.color}</div>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap">
+                <div class="flex items-center gap-1.5">
+                    <span class="energy-label ${energyColor} text-white">${item.energy}</span>
+                    <span class="${isGreen?'plate-ev':'plate-std '+item.pColor} italic font-mono">${item.plate}</span>
+                </div>
+            </td>
+            <td class="px-4 py-3">
+                <span class="vin-font text-xs text-slate-500 font-bold tracking-tight">${item.vin}</span>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap">
+                <span class="status-pill ${stageColor}">${stageShort[item.stageName]||item.stageName}</span>
+                <div class="text-[10px] text-slate-400 font-medium mt-1 max-w-[140px] truncate">${statusDefs[item.statusCode]?.name||''}</div>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap">
+                <span class="font-bold text-slate-700">¥${item.purchasePrice}万</span>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap">
+                <span class="text-xs font-bold text-slate-500 font-mono">${item.fullDate}</span>
+            </td>
+            <td class="px-4 py-3 whitespace-nowrap">
+                <div class="flex items-center gap-1.5">
+                    <div class="w-6 h-6 rounded-full ${isMe?'bg-blue-600':'bg-slate-300'} flex items-center justify-center text-white text-[10px] font-black flex-shrink-0">
+                        ${item.user.replace(/[（(].*/,'').trim().slice(-1)}
+                    </div>
+                    <span class="text-xs font-bold ${isMe?'text-blue-700':'text-slate-500'}">${item.user}</span>
+                </div>
+            </td>
+            <td class="px-4 py-3 text-center whitespace-nowrap">
+                <div class="flex items-center justify-center gap-2">
+                    <button onclick="event.stopPropagation();openDetail(${item.id})" class="text-[11px] font-black text-slate-500 hover:text-blue-600 px-2 py-1 rounded-lg hover:bg-blue-50 transition-colors">详情</button>
+                    ${isMe?`<button onclick="event.stopPropagation();openDetailThenHandle(${item.id})" class="text-[11px] font-black text-blue-600 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 transition-colors flex items-center gap-1"><i data-lucide="arrow-right-circle" class="w-3 h-3"></i>去办理</button>`:''}
+                </div>
+            </td>
+        </tr>`;
+    }).join('');
+
+    // Page info
+    const start = total===0?0:(pcPage-1)*PC_PAGE_SIZE+1;
+    const end = Math.min(pcPage*PC_PAGE_SIZE, total);
+    document.getElementById('pc-page-info').textContent = `显示 ${start}–${end} 条，共 ${total} 条`;
+
+    // Pagination
+    renderPagination(totalPages);
+    lucide.createIcons();
+}
+
+function renderPagination(totalPages) {
+    const pg = document.getElementById('pc-pagination');
+    if (!pg) return;
+    let pages = [];
+    // Always show: prev, first, ..., current-1, current, current+1, ..., last, next
+    const delta = 1;
+    const range = [];
+    for (let i = Math.max(2, pcPage-delta); i <= Math.min(totalPages-1, pcPage+delta); i++) range.push(i);
+    if (pcPage-delta > 2) range.unshift('...');
+    if (pcPage+delta < totalPages-1) range.push('...');
+    if (totalPages > 1) range.unshift(1);
+    range.push(totalPages);
+
+    let html = `<button class="pagination-btn" onclick="pcGoPage(${pcPage-1})" ${pcPage===1?'disabled':''}>‹</button>`;
+    range.forEach(p => {
+        if (p==='...') html += `<span class="px-1 text-slate-400 text-sm">…</span>`;
+        else html += `<button class="pagination-btn ${p===pcPage?'active':''}" onclick="pcGoPage(${p})">${p}</button>`;
+    });
+    html += `<button class="pagination-btn" onclick="pcGoPage(${pcPage+1})" ${pcPage===totalPages?'disabled':''}>›</button>`;
+    pg.innerHTML = html;
+}
+
+function pcGoPage(p) {
+    const filtered = getPcFiltered();
+    const totalPages = Math.max(1, Math.ceil(filtered.length / PC_PAGE_SIZE));
+    if (p < 1 || p > totalPages) return;
+    pcPage = p;
+    renderPcTable();
+    document.getElementById('pc-table-area').scrollTo({top:0, behavior:'smooth'});
+}
+
+function pcSort(key) {
+    if (pcSort_key === key) pcSort_order = pcSort_order==='asc'?'desc':'asc';
+    else { pcSort_key = key; pcSort_order = 'desc'; }
+    pcPage = 1;
+    renderPcTable();
+}
+
+function handlePcSearch() {
+    pcSearchQuery = document.getElementById('pc-search-input')?.value || '';
+    pcPage = 1; renderPcTable();
+}
+function handlePcFilter() {
+    pcEnergyFilter = document.getElementById('pc-energy-filter')?.value || '';
+    pcUserFilter = document.getElementById('pc-user-filter')?.value || '';
+    pcPage = 1; renderPcTable();
+}
+
+// Export Excel
+function exportExcel() {
+    const filtered = getPcFiltered();
+    const rows = [
+        ['车型','颜色','能源类型','车牌号','VIN码','车牌归属','采购价(万)','配置','受损情况','当前阶段','当前状态','经办人','录入日期'],
+        ...filtered.map(v => [
+            v.model, v.color, v.energy, v.plate, v.vin, v.plateType,
+            v.purchasePrice, v.config, v.damage,
+            v.stageName, statusDefs[v.statusCode]?.name||'',
+            v.user, v.fullDate
+        ])
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    // Column widths
+    ws['!cols'] = [20,8,6,12,20,10,10,30,20,16,40,10,12].map(w=>({wch:w}));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '车辆作业台');
+    const date = new Date().toISOString().slice(0,10);
+    XLSX.writeFile(wb, `车辆作业台_${date}.xlsx`);
+    showToast('Excel 已导出 ✓');
+}
+
+// Resize handler: re-render when crossing 900px breakpoint
+let _lastIsPC = null;
+window.addEventListener('resize', () => {
+    const now = isPC();
+    if (now !== _lastIsPC) { _lastIsPC = now; if (now) renderPcTable(); }
+});
+
+
+renderList();
+if(isPC()) renderPcTable();
+</script>
+</body>
+</html>
