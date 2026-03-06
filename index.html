@@ -381,6 +381,11 @@ for(let i=0;i<55;i++){
     });
 }
 
+
+// ── Shared helpers ──
+const energyBg = e => e==='纯电'?'bg-emerald-600':e==='增程'?'bg-orange-500':'bg-slate-500';
+const avatarChar = u => u.replace(/[（(].*/,'').trim().slice(-1);
+const plateCls = (item) => item.energy!=='燃油' ? 'plate-ev' : 'plate-std '+item.pColor;
 let currentFilters={user:null,energy:null};
 let currentSort={key:'fullDate',order:'desc'};
 let searchQuery="";
@@ -410,19 +415,14 @@ function openHandle(fromPage){
     showPage('page-handle');
 }
 
-function openSearch(){
-    document.getElementById('header-title').classList.add('hidden');
-    document.getElementById('header-actions').classList.add('hidden');
-    document.getElementById('search-bar').classList.add('active');
-    document.getElementById('search-input').focus();
+function toggleSearch(open) {
+    ['header-title','header-actions'].forEach(id => document.getElementById(id).classList.toggle('hidden', open));
+    document.getElementById('search-bar').classList.toggle('active', open);
+    if (open) document.getElementById('search-input').focus();
+    else { document.getElementById('search-input').value=''; searchQuery=''; pcPage=1; renderBoth(); }
 }
-function closeSearch(){
-    document.getElementById('header-title').classList.remove('hidden');
-    document.getElementById('header-actions').classList.remove('hidden');
-    document.getElementById('search-bar').classList.remove('active');
-    document.getElementById('search-input').value="";
-    searchQuery=""; pcPage=1; renderBoth();
-}
+const openSearch  = () => toggleSearch(true);
+const closeSearch = () => toggleSearch(false);
 function handleSearch(){
     searchQuery=document.getElementById('search-input').value.toLowerCase();
     pcPage=1; renderBoth();
@@ -430,14 +430,13 @@ function handleSearch(){
 
 function renderMobileCard(item){
     const isMe=item.user.includes('我');
-    const isGreen=item.energy!=='燃油';
     const stageColor=stageColors[item.stageName]||'bg-slate-100 text-slate-600';
     return `
     <div class="mobile-card p-3.5 flex flex-col gap-2 border-b active:bg-slate-50 transition-colors cursor-pointer" style="opacity:${isMe?1:0.65}" onclick="openDetail(${item.id})">
         <div class="flex items-center gap-2 overflow-hidden">
             <div class="flex items-center gap-1.5 flex-shrink-0">
-                <span class="energy-label ${item.energy==='纯电'?'bg-emerald-600':(item.energy==='增程'?'bg-orange-500':'bg-slate-500')} text-white">${item.energy}</span>
-                <span class="${isGreen?'plate-ev':'plate-std '+item.pColor} italic font-mono">${item.plate}</span>
+                <span class="energy-label ${energyBg(item.energy)} text-white">${item.energy}</span>
+                <span class="${plateCls(item)} italic font-mono">${item.plate}</span>
             </div>
             <h2 class="text-[16px] font-extrabold text-slate-800 tracking-tight truncate flex-1 min-w-0">${item.model}</h2>
             <span class="status-pill ${stageColor} flex-shrink-0">${stageShort[item.stageName]||item.stageName}</span>
@@ -492,7 +491,6 @@ function renderDetail(){
     const v=currentItem; if(!v)return;
     const def=statusDefs[v.statusCode];
     const isMe=v.user.includes('我');
-    const isGreen=v.energy!=='燃油';
     const stageColor=stageColors[v.stageName]||'bg-slate-100 text-slate-600';
     const history=mockHistory(v.statusCode);
 
@@ -502,8 +500,8 @@ function renderDetail(){
                 <div>
                     <h2 class="text-2xl font-black text-slate-800 tracking-tight">${v.model}</h2>
                     <div class="flex items-center gap-2 mt-1.5 flex-wrap">
-                        <span class="energy-label ${v.energy==='纯电'?'bg-emerald-600':(v.energy==='增程'?'bg-orange-500':'bg-slate-500')} text-white">${v.energy}</span>
-                        <span class="${isGreen?'plate-ev':'plate-std '+v.pColor} italic font-mono">${v.plate}</span>
+                        <span class="energy-label ${energyBg(v.energy)} text-white">${v.energy}</span>
+                        <span class="${plateCls(v)} italic font-mono">${v.plate}</span>
                         <span class="text-xs text-slate-400 font-bold">${v.plateType}</span>
                     </div>
                 </div>
@@ -548,7 +546,7 @@ function renderDetail(){
             </div>
             <div class="flex items-center justify-between mt-3">
                 <div class="flex items-center gap-2">
-                    <div class="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-black">${v.user.replace(/[（(].*/,"").trim().slice(-1)}</div>
+                    <div class="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-black">${avatarChar(v.user)}</div>
                     <div>
                         <p class="text-xs font-black text-slate-700">${v.user}</p>
                         <p class="text-[10px] text-slate-400">当前经办人</p>
@@ -655,15 +653,18 @@ function renderHandle(){
 }
 
 function mockUpload(el){
-    el.classList.remove('border-dashed','border-slate-200');
-    el.classList.add('border-solid','border-green-400','bg-green-50');
-    el.querySelector('[data-lucide="upload-cloud"]').setAttribute('data-lucide','file-check');
-    el.querySelector('.upload-hint').textContent='已上传 · 模拟文件.pdf';
-    el.querySelector('.upload-hint').classList.add('text-green-600');
-    el.querySelector('.upload-icon').setAttribute('data-lucide','check-circle-2');
-    el.querySelector('.upload-icon').classList.remove('text-slate-300');
-    el.querySelector('.upload-icon').classList.add('text-green-500');
-    lucide.createIcons();
+    const label = el.querySelector('p.font-bold')?.textContent || '';
+    el.className = el.className.replace('border-dashed border-slate-200','border-solid border-green-400 bg-green-50');
+    el.innerHTML = `
+        <div class="w-9 h-9 rounded-xl bg-green-100 flex items-center justify-center flex-shrink-0">
+            <i data-lucide="file-check" class="w-4 h-4 text-green-600"></i>
+        </div>
+        <div class="flex-1 min-w-0">
+            <p class="text-sm font-bold text-slate-700 truncate">${label}</p>
+            <p class="text-[10px] text-green-600">已上传 · 模拟文件.pdf</p>
+        </div>
+        <i data-lucide="check-circle-2" class="w-5 h-5 text-green-500 flex-shrink-0"></i>`;
+    lucide.createIcons({nodes:[el]});
 }
 
 function showToast(msg){
@@ -900,32 +901,19 @@ function mockScanVin() {
     document.getElementById('c-vin').value = generateVin(e);
     updateVinCounter(); showToast('扫码识别成功 ✓');
 }
-function selectEnergy(val, activeClass) {
-    createForm.energy = val;
-    document.querySelectorAll('.energy-select-btn').forEach(btn => {
-        const isActive = btn.id === 'energy-btn-' + val;
-        btn.className = `energy-select-btn py-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-colors ${isActive ? activeClass : 'border-slate-200 text-slate-400'}`;
+function selectBtn(selector, formKey, val, baseClass, activeExtra='border-blue-500 bg-blue-50 text-blue-600', matchFn=null) {
+    createForm[formKey] = val;
+    document.querySelectorAll(selector).forEach(btn => {
+        const active = matchFn ? matchFn(btn, val) : btn.textContent.trim() === val;
+        btn.className = `${selector.slice(1)} ${baseClass} ${active ? activeExtra : 'border-slate-200 text-slate-400'}`;
     });
 }
-function selectPlateType(val) {
-    createForm.plateType = val;
-    document.querySelectorAll('.plate-type-btn').forEach(btn => {
-        btn.className = `plate-type-btn py-2 rounded-xl border-2 text-xs font-black transition-colors ${btn.textContent.trim()===val?'border-blue-500 bg-blue-50 text-blue-600':'border-slate-200 text-slate-400'}`;
-    });
-}
-function selectColor(val) {
-    createForm.color = val;
-    document.querySelectorAll('.color-btn').forEach(btn => {
-        btn.className = `color-btn px-2 py-1 rounded-lg border-2 text-[11px] font-bold transition-colors ${btn.textContent.trim()===val?'border-blue-500 bg-blue-50 text-blue-600':'border-slate-200 text-slate-400'}`;
-    });
-}
-function selectAssignee(val) {
-    createForm.assignee = val;
-    document.querySelectorAll('.assignee-btn').forEach(btn => {
-        const isActive = btn.textContent.trim() === val;
-        btn.className = `assignee-btn py-2.5 rounded-xl border-2 text-xs font-black transition-colors flex items-center justify-center gap-1.5 ${isActive?'border-blue-500 bg-blue-50 text-blue-600':'border-slate-200 text-slate-400'}`;
-    });
-}
+const selectEnergy = (val, ac) => selectBtn('.energy-select-btn', 'energy', val,
+    'py-3 rounded-xl border-2 flex flex-col items-center gap-1 transition-colors', ac,
+    (btn) => btn.id === 'energy-btn-' + val);
+const selectPlateType = val => selectBtn('.plate-type-btn', 'plateType', val, 'py-2 rounded-xl border-2 text-xs font-black transition-colors');
+const selectColor     = val => selectBtn('.color-btn',      'color',     val, 'px-2 py-1 rounded-lg border-2 text-[11px] font-bold transition-colors');
+const selectAssignee  = val => selectBtn('.assignee-btn',   'assignee',  val, 'py-2.5 rounded-xl border-2 text-xs font-black transition-colors flex items-center justify-center gap-1.5');
 function createSubmit() {
     const vin = document.getElementById('c-vin')?.value.trim() || '';
     const model = document.getElementById('c-model')?.value.trim() || '';
@@ -998,9 +986,8 @@ function renderPcTable() {
 
     tbody.innerHTML = pageData.map(item => {
         const isMe = item.user.includes('我');
-        const isGreen = item.energy !== '燃油';
         const stageColor = stageColors[item.stageName] || 'bg-slate-100 text-slate-600';
-        const energyColor = item.energy==='纯电'?'bg-emerald-600':(item.energy==='增程'?'bg-orange-500':'bg-slate-500');
+        const energyColor = energyBg(item.energy);
         return `<tr class="pc-row cursor-pointer" onclick="openDetail(${item.id})">
             <td class="px-4 py-3">
                 <div class="font-extrabold text-slate-800 text-sm whitespace-nowrap">${item.model}</div>
@@ -1009,7 +996,7 @@ function renderPcTable() {
             <td class="px-4 py-3 whitespace-nowrap">
                 <div class="flex items-center gap-1.5">
                     <span class="energy-label ${energyColor} text-white">${item.energy}</span>
-                    <span class="${isGreen?'plate-ev':'plate-std '+item.pColor} italic font-mono">${item.plate}</span>
+                    <span class="${plateCls(item)} italic font-mono">${item.plate}</span>
                 </div>
             </td>
             <td class="px-4 py-3">
@@ -1028,7 +1015,7 @@ function renderPcTable() {
             <td class="px-4 py-3 whitespace-nowrap">
                 <div class="flex items-center gap-1.5">
                     <div class="w-6 h-6 rounded-full ${isMe?'bg-blue-600':'bg-slate-300'} flex items-center justify-center text-white text-[10px] font-black flex-shrink-0">
-                        ${item.user.replace(/[（(].*/,'').trim().slice(-1)}
+                        ${avatarChar(item.user)}
                     </div>
                     <span class="text-xs font-bold ${isMe?'text-blue-700':'text-slate-500'}">${item.user}</span>
                 </div>
@@ -1052,28 +1039,18 @@ function renderPcTable() {
     lucide.createIcons();
 }
 
-// Render both views + sync PC UI inputs to shared state
-function renderBoth() {
-    // Sync PC search input
-    const pcSearch = document.getElementById('pc-search-input');
-    if (pcSearch && document.activeElement !== pcSearch) pcSearch.value = searchQuery;
-    // Sync PC energy filter
-    const pcEnergy = document.getElementById('pc-energy-filter');
-    if (pcEnergy) pcEnergy.value = currentFilters.energy || '';
-    // Sync PC user filter
-    const pcUser = document.getElementById('pc-user-filter');
-    if (pcUser) pcUser.value = currentFilters.user || '';
-    // Sync PC sort select
-    const pcSortSel = document.getElementById('pc-sort-select');
-    if (pcSortSel) pcSortSel.value = currentSort.key + '|' + currentSort.order;
-    renderList();
-    if (isPC()) renderPcTable();
+function syncPcUI() {
+    const v = id => document.getElementById(id);
+    if (v('pc-search-input') && document.activeElement !== v('pc-search-input')) v('pc-search-input').value = searchQuery;
+    if (v('pc-energy-filter')) v('pc-energy-filter').value = currentFilters.energy || '';
+    if (v('pc-user-filter'))   v('pc-user-filter').value   = currentFilters.user   || '';
+    if (v('pc-sort-select'))   v('pc-sort-select').value   = currentSort.key + '|' + currentSort.order;
 }
+function renderBoth() { syncPcUI(); renderList(); if (isPC()) renderPcTable(); }
 
 function renderPagination(totalPages) {
     const pg = document.getElementById('pc-pagination');
     if (!pg) return;
-    let pages = [];
     // Always show: prev, first, ..., current-1, current, current+1, ..., last, next
     const delta = 1;
     const range = [];
@@ -1108,25 +1085,21 @@ function pcSort(key) {
     renderBoth();
 }
 
+function resetPage(){ pcPage=1; renderBoth(); }
 function handlePcSearch() {
     searchQuery = (document.getElementById('pc-search-input')?.value || '').toLowerCase();
-    // sync mobile search input if visible
-    const mobileInput = document.getElementById('search-input');
-    if (mobileInput) mobileInput.value = searchQuery;
-    pcPage = 1; renderBoth();
+    document.getElementById('search-input').value = searchQuery;
+    resetPage();
 }
 function handlePcFilter() {
-    const energy = document.getElementById('pc-energy-filter')?.value || '';
-    const user = document.getElementById('pc-user-filter')?.value || '';
-    currentFilters.energy = energy || null;
-    currentFilters.user = user || null;
-    pcPage = 1; renderBoth();
+    currentFilters.energy = document.getElementById('pc-energy-filter')?.value || null;
+    currentFilters.user   = document.getElementById('pc-user-filter')?.value   || null;
+    resetPage();
 }
 function handlePcSort() {
-    const val = document.getElementById('pc-sort-select')?.value || 'fullDate|desc';
-    const [key, order] = val.split('|');
+    const [key, order] = (document.getElementById('pc-sort-select')?.value || 'fullDate|desc').split('|');
     currentSort = { key, order };
-    pcPage = 1; renderBoth();
+    resetPage();
 }
 
 // Export Excel
