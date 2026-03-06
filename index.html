@@ -4,6 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>车辆作业管理系统 v3.3</title>
+    <script>
+        // Must run BEFORE Tailwind loads to intercept its warning
+        const _warn = console.warn.bind(console);
+        console.warn = (...args) => {
+            if (typeof args[0] === 'string' && args[0].includes('cdn.tailwindcss.com')) return;
+            _warn(...args);
+        };
+    </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -106,6 +114,12 @@
                         <option value="李思源">李思源</option>
                         <option value="王建国">王建国</option>
                         <option value="赵明明">赵明明</option>
+                    </select>
+                    <!-- Sort -->
+                    <select id="pc-sort-select" onchange="handlePcSort()" class="border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold bg-white shadow-sm outline-none cursor-pointer">
+                        <option value="fullDate|desc">时间：最新优先</option>
+                        <option value="fullDate|asc">时间：最早优先</option>
+                        <option value="model|asc">车型：A - Z</option>
                     </select>
                     <!-- Export -->
                     <button onclick="exportExcel()" class="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-black rounded-xl shadow-sm transition-colors">
@@ -234,7 +248,7 @@
                 </div>
             </div>
         </div>
-        <button class="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-sm mt-8" onclick="renderList()">确定</button>
+        <button class="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-sm mt-8" onclick="pcPage=1;renderBoth()">确定</button>
     </div>
 </div>
 
@@ -345,7 +359,7 @@ const users=['我 (张三)','李思源','王建国','赵明明'];
 const statusCodes=[101,102,103,104,201,202,203,301,302,401,501,601,701,801,901];
 
 let rawData=[];
-for(let i=0;i<20;i++){
+for(let i=0;i<55;i++){
     const energy=['纯电','增程','燃油'][Math.floor(Math.random()*3)];
     const day=Math.floor(Math.random()*28)+1;
     const statusCode=statusCodes[Math.floor(Math.random()*statusCodes.length)];
@@ -407,59 +421,56 @@ function closeSearch(){
     document.getElementById('header-actions').classList.remove('hidden');
     document.getElementById('search-bar').classList.remove('active');
     document.getElementById('search-input').value="";
-    searchQuery=""; renderList();
+    searchQuery=""; pcPage=1; renderBoth();
 }
 function handleSearch(){
     searchQuery=document.getElementById('search-input').value.toLowerCase();
-    renderList();
+    pcPage=1; renderBoth();
+}
+
+function renderMobileCard(item){
+    const isMe=item.user.includes('我');
+    const isGreen=item.energy!=='燃油';
+    const stageColor=stageColors[item.stageName]||'bg-slate-100 text-slate-600';
+    return `
+    <div class="mobile-card p-3.5 flex flex-col gap-2 border-b active:bg-slate-50 transition-colors cursor-pointer" style="opacity:${isMe?1:0.65}" onclick="openDetail(${item.id})">
+        <div class="flex items-center gap-2 overflow-hidden">
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+                <span class="energy-label ${item.energy==='纯电'?'bg-emerald-600':(item.energy==='增程'?'bg-orange-500':'bg-slate-500')} text-white">${item.energy}</span>
+                <span class="${isGreen?'plate-ev':'plate-std '+item.pColor} italic font-mono">${item.plate}</span>
+            </div>
+            <h2 class="text-[16px] font-extrabold text-slate-800 tracking-tight truncate flex-1 min-w-0">${item.model}</h2>
+            <span class="status-pill ${stageColor} flex-shrink-0">${stageShort[item.stageName]||item.stageName}</span>
+        </div>
+        <div class="flex items-center gap-2 ${isMe?'bg-blue-50/60 border-blue-100':'bg-slate-50 border-slate-100'} px-2 py-1 rounded border">
+            <div class="flex items-center gap-1 text-slate-400 pr-2 border-r border-slate-200">
+                <i data-lucide="calendar" class="w-3 h-3"></i>
+                <span class="text-[10px] font-bold font-mono">${item.date}</span>
+            </div>
+            <span class="vin-font text-[12px] ${isMe?'text-slate-700 font-bold':'text-slate-400 font-medium'} uppercase tracking-tighter truncate"><span class="text-[9px] font-black text-slate-400 mr-0.5">VIN:</span>${item.vin}</span>
+            <div class="ml-auto flex-shrink-0 ${isMe?'cursor-pointer active:opacity-60':''}"
+                ${isMe?`onclick="event.stopPropagation();openDetailThenHandle(${item.id})"`:''}>
+                <div class="flex items-center gap-1 ${isMe?'text-blue-700':'text-slate-400'}">
+                    <i data-lucide="${isMe?'user-check':'user'}" class="w-3 h-3"></i>
+                    <span class="text-[10px] ${isMe?'font-black':'font-bold'}">${item.user}</span>
+                    ${isMe?'<i data-lucide="chevron-right" class="w-3 h-3 opacity-40"></i>':''}
+                </div>
+            </div>
+        </div>
+    </div>`;
 }
 
 function renderList(){
     const container=document.getElementById('list-container');
-    let filtered=rawData.filter(item=>{
-        const s=searchQuery;
-        const searchMatch=!s||item.model.toLowerCase().includes(s)||item.vin.toLowerCase().includes(s)||item.user.toLowerCase().includes(s)||item.plate.toLowerCase().includes(s);
-        return(!currentFilters.user||item.user===currentFilters.user)&&(!currentFilters.energy||item.energy===currentFilters.energy)&&searchMatch;
-    });
-    filtered.sort((a,b)=>{
-        let valA=a[currentSort.key],valB=b[currentSort.key];
-        return currentSort.order==='asc'?valA.localeCompare(valB):valB.localeCompare(valA);
-    });
-    container.innerHTML=filtered.map(item=>{
-        const isMe=item.user.includes('我');
-        const isGreen=item.energy!=='燃油';
-        const stageColor=stageColors[item.stageName]||'bg-slate-100 text-slate-600';
-        return `
-        <div class="p-3.5 flex flex-col gap-2 border-b active:bg-slate-50 transition-colors cursor-pointer" style="opacity:${isMe?1:0.65}" onclick="openDetail(${item.id})">
-            <div class="flex items-center gap-2 overflow-hidden">
-                <div class="flex items-center gap-1.5 flex-shrink-0">
-                    <span class="energy-label ${item.energy==='纯电'?'bg-emerald-600':(item.energy==='增程'?'bg-orange-500':'bg-slate-500')} text-white">${item.energy}</span>
-                    <span class="${isGreen?'plate-ev':'plate-std '+item.pColor} italic font-mono">${item.plate}</span>
-                </div>
-                <h2 class="text-[16px] font-extrabold text-slate-800 tracking-tight truncate flex-1 min-w-0">${item.model}</h2>
-                <span class="status-pill ${stageColor} flex-shrink-0">${stageShort[item.stageName]||item.stageName}</span>
-            </div>
-            <div class="flex items-center gap-2 ${isMe?'bg-blue-50/60 border-blue-100':'bg-slate-50 border-slate-100'} px-2 py-1 rounded border">
-                <div class="flex items-center gap-1 text-slate-400 pr-2 border-r border-slate-200">
-                    <i data-lucide="calendar" class="w-3 h-3"></i>
-                    <span class="text-[10px] font-bold font-mono">${item.date}</span>
-                </div>
-                <span class="vin-font text-[12px] ${isMe?'text-slate-700 font-bold':'text-slate-400 font-medium'} uppercase tracking-tighter truncate"><span class="text-[9px] font-black text-slate-400 mr-0.5">VIN:</span>${item.vin}</span>
-                <div class="ml-auto flex-shrink-0 ${isMe?'cursor-pointer active:opacity-60':''}"
-                    ${isMe?`onclick="event.stopPropagation();openDetailThenHandle(${item.id})"`:''}>
-                    <div class="flex items-center gap-1 ${isMe?'text-blue-700':'text-slate-400'}">
-                        <i data-lucide="${isMe?'user-check':'user'}" class="w-3 h-3"></i>
-                        <span class="text-[10px] ${isMe?'font-black':'font-bold'}">${item.user}</span>
-                        ${isMe?'<i data-lucide="chevron-right" class="w-3 h-3 opacity-40"></i>':''}
-                    </div>
-                </div>
-            </div>
-        </div>`;
-    }).join('');
+    const filtered=getFiltered();
+    // Show pcPage * PC_PAGE_SIZE items — shared pagination variable with PC
+    const visible=filtered.slice(0, pcPage * PC_PAGE_SIZE);
+    const hasMore=visible.length < filtered.length;
+    container.innerHTML=visible.map(renderMobileCard).join('')+
+        (hasMore?`<div id="mobile-load-more" class="w-full py-4 text-center text-xs font-bold text-slate-400 border-t border-slate-100">加载更多（还有 ${filtered.length - visible.length} 辆）</div>`:'');
     lucide.createIcons();
     toggleSheet('filter-sheet',true);
     toggleSheet('sort-sheet',true);
-    if(isPC()) renderPcTable();
 }
 
 function mockHistory(statusCode){
@@ -664,13 +675,15 @@ function showToast(msg){
 function handleSave(){ showToast('已保存草稿 ✓'); }
 function handleComplete(){ showToast('本阶段已完成，流转至下一环节 🎉'); setTimeout(()=>showPage(handleBackPage),1500); }
 
-function setSort(key,order){ currentSort={key,order}; renderList(); }
+function setSort(key,order){ currentSort={key,order}; pcPage=1; renderBoth(); }
+// 统一排序选项（移动/PC共用）
+const SORT_OPTS = [
+    {key:'fullDate', order:'desc', label:'时间：最新优先'},
+    {key:'fullDate', order:'asc',  label:'时间：最早优先'},
+    {key:'model',    order:'asc',  label:'车型：A - Z'},
+];
 function updateSortUI(){
-    const opts=[
-        {key:'fullDate',order:'desc',label:'时间：最新优先'},
-        {key:'fullDate',order:'asc',label:'时间：最早优先'},
-        {key:'model',order:'asc',label:'车型：A - Z'}
-    ];
+    const opts = SORT_OPTS;
     document.getElementById('sort-options').innerHTML=opts.map(opt=>`
         <button onclick="setSort('${opt.key}','${opt.order}')" class="w-full p-4 text-left font-bold rounded-xl flex justify-between items-center ${currentSort.key===opt.key&&currentSort.order===opt.order?'bg-blue-50 text-blue-600 border-2 border-blue-600':'border border-slate-100 text-slate-500'}">
             ${opt.label} ${currentSort.key===opt.key&&currentSort.order===opt.order?'<i data-lucide="check" class="w-4 h-4"></i>':''}
@@ -689,7 +702,7 @@ function resetFilters(){
     currentFilters={user:null,energy:null};
     updateFilter('user',null,document.getElementById('user-all'));
     updateFilter('energy',null,document.getElementById('energy-all'));
-    renderList();
+    pcPage=1; renderBoth();
 }
 function toggleSheet(id,forceClose=false){
     const sheet=document.getElementById(id);
@@ -936,37 +949,33 @@ function createSubmit() {
         pColor: energy==='燃油'?'bg-blue-600 text-white':'', customsAt: null,
     });
     showToast('车辆录入成功 🎉');
-    setTimeout(() => { renderList(); if(isPC()) renderPcTable(); showPage('page-list'); }, 900);
+    pcPage=1; setTimeout(() => { renderBoth(); showPage('page-list'); }, 900);
 }
 
 // ===== PC TABLE =====
 let pcPage = 1;
-const PC_PAGE_SIZE = 12;
-let pcSort_key = 'fullDate';
-let pcSort_order = 'desc';
-let pcSearchQuery = '';
-let pcEnergyFilter = '';
-let pcUserFilter = '';
+const PC_PAGE_SIZE = 10;
 
-function isPC() { return window.innerWidth >= 900; }
+function isPC() { const el = document.getElementById('pc-table-area'); return el ? el.offsetParent !== null : window.innerWidth >= 900; }
 
-function getPcFiltered() {
+// Single source of truth: reuse mobile currentFilters / currentSort / searchQuery
+function getFiltered() {
     return rawData.filter(item => {
-        const s = pcSearchQuery.toLowerCase();
+        const s = searchQuery.toLowerCase();
         const searchMatch = !s || item.model.toLowerCase().includes(s) || item.vin.toLowerCase().includes(s) || item.user.toLowerCase().includes(s) || item.plate.toLowerCase().includes(s);
-        return (!pcEnergyFilter || item.energy === pcEnergyFilter)
-            && (!pcUserFilter || item.user === pcUserFilter)
+        return (!currentFilters.user || item.user === currentFilters.user)
+            && (!currentFilters.energy || item.energy === currentFilters.energy)
             && searchMatch;
     }).sort((a, b) => {
-        let vA = a[pcSort_key] ?? '', vB = b[pcSort_key] ?? '';
-        if (pcSort_key === 'purchasePrice') { vA = parseFloat(vA)||0; vB = parseFloat(vB)||0; return pcSort_order==='asc'? vA-vB : vB-vA; }
-        return pcSort_order==='asc' ? String(vA).localeCompare(String(vB)) : String(vB).localeCompare(String(vA));
+        let vA = a[currentSort.key] ?? '', vB = b[currentSort.key] ?? '';
+        if (currentSort.key === 'purchasePrice') { vA = parseFloat(vA)||0; vB = parseFloat(vB)||0; return currentSort.order==='asc'? vA-vB : vB-vA; }
+        return currentSort.order==='asc' ? String(vA).localeCompare(String(vB)) : String(vB).localeCompare(String(vA));
     });
 }
 
 function renderPcTable() {
     if (!isPC()) return;
-    const filtered = getPcFiltered();
+    const filtered = getFiltered();
     const total = filtered.length;
     const totalPages = Math.max(1, Math.ceil(total / PC_PAGE_SIZE));
     if (pcPage > totalPages) pcPage = totalPages;
@@ -979,8 +988,8 @@ function renderPcTable() {
     ['model','purchasePrice','fullDate'].forEach(k => {
         const el = document.getElementById('sort-icon-'+k);
         if (!el) return;
-        el.textContent = pcSort_key===k ? (pcSort_order==='asc'?'↑':'↓') : '↕';
-        el.style.color = pcSort_key===k ? '#2563eb' : '#cbd5e1';
+        el.textContent = currentSort.key===k ? (currentSort.order==='asc'?'↑':'↓') : '↕';
+        el.style.color = currentSort.key===k ? '#2563eb' : '#cbd5e1';
     });
 
     // Table body
@@ -1043,6 +1052,24 @@ function renderPcTable() {
     lucide.createIcons();
 }
 
+// Render both views + sync PC UI inputs to shared state
+function renderBoth() {
+    // Sync PC search input
+    const pcSearch = document.getElementById('pc-search-input');
+    if (pcSearch && document.activeElement !== pcSearch) pcSearch.value = searchQuery;
+    // Sync PC energy filter
+    const pcEnergy = document.getElementById('pc-energy-filter');
+    if (pcEnergy) pcEnergy.value = currentFilters.energy || '';
+    // Sync PC user filter
+    const pcUser = document.getElementById('pc-user-filter');
+    if (pcUser) pcUser.value = currentFilters.user || '';
+    // Sync PC sort select
+    const pcSortSel = document.getElementById('pc-sort-select');
+    if (pcSortSel) pcSortSel.value = currentSort.key + '|' + currentSort.order;
+    renderList();
+    if (isPC()) renderPcTable();
+}
+
 function renderPagination(totalPages) {
     const pg = document.getElementById('pc-pagination');
     if (!pg) return;
@@ -1066,7 +1093,7 @@ function renderPagination(totalPages) {
 }
 
 function pcGoPage(p) {
-    const filtered = getPcFiltered();
+    const filtered = getFiltered();
     const totalPages = Math.max(1, Math.ceil(filtered.length / PC_PAGE_SIZE));
     if (p < 1 || p > totalPages) return;
     pcPage = p;
@@ -1075,25 +1102,36 @@ function pcGoPage(p) {
 }
 
 function pcSort(key) {
-    if (pcSort_key === key) pcSort_order = pcSort_order==='asc'?'desc':'asc';
-    else { pcSort_key = key; pcSort_order = 'desc'; }
+    if (currentSort.key === key) currentSort.order = currentSort.order==='asc'?'desc':'asc';
+    else { currentSort.key = key; currentSort.order = 'desc'; }
     pcPage = 1;
-    renderPcTable();
+    renderBoth();
 }
 
 function handlePcSearch() {
-    pcSearchQuery = document.getElementById('pc-search-input')?.value || '';
-    pcPage = 1; renderPcTable();
+    searchQuery = (document.getElementById('pc-search-input')?.value || '').toLowerCase();
+    // sync mobile search input if visible
+    const mobileInput = document.getElementById('search-input');
+    if (mobileInput) mobileInput.value = searchQuery;
+    pcPage = 1; renderBoth();
 }
 function handlePcFilter() {
-    pcEnergyFilter = document.getElementById('pc-energy-filter')?.value || '';
-    pcUserFilter = document.getElementById('pc-user-filter')?.value || '';
-    pcPage = 1; renderPcTable();
+    const energy = document.getElementById('pc-energy-filter')?.value || '';
+    const user = document.getElementById('pc-user-filter')?.value || '';
+    currentFilters.energy = energy || null;
+    currentFilters.user = user || null;
+    pcPage = 1; renderBoth();
+}
+function handlePcSort() {
+    const val = document.getElementById('pc-sort-select')?.value || 'fullDate|desc';
+    const [key, order] = val.split('|');
+    currentSort = { key, order };
+    pcPage = 1; renderBoth();
 }
 
 // Export Excel
 function exportExcel() {
-    const filtered = getPcFiltered();
+    const filtered = getFiltered();
     const rows = [
         ['车型','颜色','能源类型','车牌号','VIN码','车牌归属','采购价(万)','配置','受损情况','当前阶段','当前状态','经办人','录入日期'],
         ...filtered.map(v => [
@@ -1113,16 +1151,54 @@ function exportExcel() {
     showToast('Excel 已导出 ✓');
 }
 
-// Resize handler: re-render when crossing 900px breakpoint
-let _lastIsPC = null;
-window.addEventListener('resize', () => {
-    const now = isPC();
-    if (now !== _lastIsPC) { _lastIsPC = now; if (now) renderPcTable(); }
+window.addEventListener('scroll', () => {
+    if (isPC()) return;
+    // Load more when approaching the bottom trigger
+    const trigger = document.getElementById('mobile-load-more');
+    if (trigger && trigger.getBoundingClientRect().top < window.innerHeight + 120) {
+        pcPage++;
+        renderList();
+        lucide.createIcons();
+        return;
+    }
+    // Sync pcPage with current scroll position (for PC alignment on switch)
+    const cards = document.querySelectorAll('#list-container .mobile-card');
+    if (!cards.length) return;
+    let topCardIndex = 0;
+    for (let i = 0; i < cards.length; i++) {
+        if (cards[i].getBoundingClientRect().top <= 80) topCardIndex = i;
+        else break;
+    }
+    pcPage = Math.floor(topCardIndex / PC_PAGE_SIZE) + 1;
 });
 
+// Resize handler: on breakpoint cross, re-render and position by pcPage
+let _lastIsPC = isPC();
+let _resizeTimer = null;
+window.addEventListener('resize', () => {
+    clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(() => {
+        const now = isPC();
+        if (now === _lastIsPC) return;
+        _lastIsPC = now;
+        renderBoth();
+        // After render, scroll mobile to the start of current pcPage
+        if (!now) scrollMobileToPcPage();
+    }, 150);
+});
 
-renderList();
-if(isPC()) renderPcTable();
+function scrollMobileToPcPage() {
+    if (pcPage <= 1) return;
+    const targetIndex = (pcPage - 1) * PC_PAGE_SIZE;
+    // Wait for DOM to settle then scroll
+    requestAnimationFrame(() => {
+        const cards = document.querySelectorAll('#list-container .mobile-card');
+        if (cards[targetIndex]) cards[targetIndex].scrollIntoView({ block: 'start' });
+    });
+}
+
+
+renderBoth();
 </script>
 </body>
 </html>
